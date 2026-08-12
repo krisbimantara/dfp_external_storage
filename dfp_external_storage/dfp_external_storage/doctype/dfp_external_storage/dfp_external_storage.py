@@ -268,7 +268,7 @@ class MinioConnection:
 			expires = timedelta(seconds=expires)
 		return self.client.presigned_get_object(bucket_name=bucket_name, object_name=object_name, expires=expires, response_headers=response_headers)
 
-	def put_object(self, bucket_name, object_name, data, metadata=None, length=-1):
+	def put_object(self, bucket_name, object_name, data, metadata=None, length=-1, content_type:str=None):
 		"""
 		Minio params:
 		:param bucket_name: Name of the bucket.
@@ -287,7 +287,8 @@ class MinioConnection:
 		:param legal_hold: Flag to set legal hold for the object.
 		"""
 		return self.client.put_object(bucket_name=bucket_name,
- object_name=object_name, data=data, metadata=metadata, length=length)
+ object_name=object_name, data=data, metadata=metadata, length=length,
+ content_type=content_type or "application/octet-stream")
 
 	def list_objects(self, bucket_name:str, recursive=True):
 		"""
@@ -412,6 +413,7 @@ class DFPExternalStorageFile(File):
 					object_name=key,
 					data=f,
 					length=os.path.getsize(local_file),
+					content_type=self.dfp_mime_type_guess_by_file_name,
 					# Meta removed because same s3 file can be used within different File docs
 					# metadata={"frappe_file_id": self.name}
 				)
@@ -649,6 +651,7 @@ def hook_file_before_save(doc, method):
 						object_name=doc.dfp_external_storage_s3_key,
 						data=response,
 						length=response.object_size,
+						content_type=doc.dfp_mime_type_guess_by_file_name,
 						# Meta removed because same s3 file can be used within different File docs
 						# metadata={"frappe_file_id": self.name}
 					)
