@@ -374,6 +374,12 @@ class DFPExternalStorageFile(File):
 			frappe.msgprint(_("""This doctype does not allow remote files attached to it. Check "DFP External Storage" advanced settings for more details."""))
 			return True
 
+	@property
+	def dfp_s3_key_prefix(self):
+		"Group objects within the bucket by the doctype the file is attached to"
+		prefix = (self.attached_to_doctype or "").strip().replace("/", "-")
+		return prefix or "Unattached"
+
 	def dfp_external_storage_upload_file(self, local_file=None):
 		"""
 		Critical fields: "dfp_external_storage_s3_key", "dfp_external_storage" and "file_url"
@@ -398,7 +404,7 @@ class DFPExternalStorageFile(File):
 		# Define S3 key
 		# key = f"{frappe.local.site}/{self.file_name}" # << Before 2024.03.03
 		base, extension = os.path.splitext(self.file_name)
-		key = f"{frappe.local.site}/{base}-{self.name}{extension}"
+		key = f"{self.dfp_s3_key_prefix}/{base}-{self.name}{extension}"
 
 		is_public = "/public" if not self.is_private else ""
 		if not local_file:
