@@ -3,7 +3,7 @@
 ## Frappe 16 compatibility branch
 
 The `version-16` branch of `krisbimantara/dfp_external_storage` targets
-Frappe 16 and is used with Juragan's `frappe-16-compat` branch. ERPNext is not
+Frappe 16 and is used with Juragan's `dev-wordfangs-v16` branch. ERPNext is not
 required. Framework/runtime installation is handled separately.
 
 The primary migration reference is the official
