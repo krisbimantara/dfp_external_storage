@@ -11,8 +11,7 @@ from functools import cached_property
 from minio import Minio
 import frappe
 from frappe import _
-from frappe.core.doctype.file.file import File
-from frappe.core.doctype.file.file import URL_PREFIXES
+from frappe.core.doctype.file.file import FILE_ENCODING_OPTIONS, URL_PREFIXES, File
 from frappe.model.document import Document
 from frappe.utils.password import get_decrypted_password
 
@@ -22,6 +21,12 @@ DFP_EXTERNAL_STORAGE_PUBLIC_CACHE_PREFIX = "external_storage_public_file:"
 # http://[host:port]/<file>/[File:name]/[File:file_name]
 # http://myhost.localhost:8000/file/c7baa5b2ff/my-image.png
 DFP_EXTERNAL_STORAGE_URL_SEGMENT_FOR_FILE_LOAD = "file"
+
+# ZIP containers (including XLSX) and OLE Office files are binary, even when a
+# permissive text codec can decode their bytes without raising an error.
+BINARY_FILE_SIGNATURES = (
+	b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+)
 
 
 DFP_EXTERNAL_STORAGE_CONNECTION_FIELDS = [
@@ -46,11 +51,17 @@ class S3FileProxy:
 
 	def seek(self, offset, whence=0):
 		if whence == io.SEEK_SET:
-			self.offset = offset
+			new_offset = offset
 		elif whence == io.SEEK_CUR:
-			self.offset = self.offset + offset
+			new_offset = self.offset + offset
 		elif whence == io.SEEK_END:
-			self.offset = self.object_size + offset
+			new_offset = self.object_size + offset
+		else:
+			raise ValueError("Invalid seek mode")
+		if new_offset < 0:
+			raise ValueError("Negative seek position")
+		self.offset = new_offset
+		return self.offset
 
 	def seekable(self):
 		return True
@@ -58,8 +69,12 @@ class S3FileProxy:
 	def tell(self):
 		return self.offset
 
-	def read(self, size=0):
-		content = self.readFn(self.offset, size)
+	def read(self, size=-1):
+		if size == 0 or self.offset >= self.object_size:
+			return b""
+		remaining = self.object_size - self.offset
+		length = remaining if size < 0 else min(size, remaining)
+		content = self.readFn(self.offset, length)
 		self.offset = self.offset + len(content)
 		return content
 
@@ -78,6 +93,7 @@ class DFPExternalStorage(Document):
 					return True
 			return False
 
+		self.validate_folder_assignments()
 		if self.stream_buffer_size < 8192:
 			frappe.msgprint(_("Stream buffer size must be at least of 8192 bytes."))
 			self.stream_buffer_size = 8192
@@ -89,6 +105,28 @@ class DFPExternalStorage(Document):
 				frappe.msgprint(_("There are {} files using this bucket. The field you just updated is critical, be careful!").format(self.files_within))
 		if not previous or has_changed(self, previous, DFP_EXTERNAL_STORAGE_CONNECTION_FIELDS):
 			self.validate_bucket()
+
+	def validate_folder_assignments(self):
+		folders = [row.folder for row in (self.folders or []) if row.folder]
+		if len(folders) != len(set(folders)):
+			frappe.throw(_("A folder can only be assigned once to an external storage."))
+		if not folders:
+			return
+		conflict = frappe.get_all(
+			"DFP External Storage by Folder",
+			filters={
+				"folder": ["in", folders],
+				"parenttype": "DFP External Storage",
+				"parent": ["!=", self.name],
+			},
+			fields=["folder", "parent"],
+			order_by="name asc",
+			limit=1,
+		)
+		if conflict:
+			frappe.throw(_("Folder {0} is already assigned to external storage {1}.").format(
+				conflict[0].folder, conflict[0].parent
+			))
 
 	def on_trash(self):
 		if self.files_within:
@@ -313,6 +351,30 @@ class DFPExternalStorageFile(File):
 	def __init__(self, *args, **kwargs):
 		super(DFPExternalStorageFile, self).__init__(*args, **kwargs)
 
+	def before_insert(self):
+		self.dfp_file_url_is_s3_location_check_if_s3_data_is_not_defined()
+		content_hash = self.content_hash
+		# Keep core private-file access checks and attachment-copy flags intact.
+		super().before_insert()
+		self._restore_managed_content_hash(content_hash)
+
+	def validate(self):
+		self.dfp_file_url_is_s3_location_check_if_s3_data_is_not_defined()
+		content_hash = self.content_hash
+		super().validate()
+		self._restore_managed_content_hash(content_hash)
+
+	def _restore_managed_content_hash(self, content_hash):
+		# Core clears hashes for generic remote URLs. DFP owns a stored blob whose
+		# known hash is still useful when copying or reusing an attachment.
+		if (
+			self.dfp_external_storage
+			and self.dfp_external_storage_s3_key
+			and content_hash
+			and (self.file_url or "").startswith(f"/{DFP_EXTERNAL_STORAGE_URL_SEGMENT_FOR_FILE_LOAD}/")
+		):
+			self.content_hash = self.content_hash or content_hash
+
 	@property
 	def is_remote_file(self):
 		return True if self.dfp_external_storage_s3_key else super(DFPExternalStorageFile, self).is_remote_file
@@ -331,14 +393,16 @@ class DFPExternalStorageFile(File):
 			dfp_ext_strg_name = frappe.db.get_value(
 				"DFP External Storage by Folder",
 				fieldname="parent",
-				filters={ "folder": self.folder }
+				filters={ "folder": self.folder, "parenttype": "DFP External Storage" },
+				order_by="modified desc, name desc",
 			)
 			# 3. Default connection (Home folder)
 			if not dfp_ext_strg_name:
 				dfp_ext_strg_name = frappe.db.get_value(
 					"DFP External Storage by Folder",
 					fieldname="parent",
-					filters={ "folder": "Home" }
+					filters={ "folder": "Home", "parenttype": "DFP External Storage" },
+					order_by="modified desc, name desc",
 				)
 			if dfp_ext_strg_name:
 				dfp_ext_strg_doc = frappe.get_doc("DFP External Storage", dfp_ext_strg_name)
@@ -582,14 +646,22 @@ class DFPExternalStorageFile(File):
 		except:
 			pass
 
-	def get_content(self) -> bytes:
+	def get_content(self, encodings=None) -> bytes | str:
 		self.dfp_file_url_is_s3_location_check_if_s3_data_is_not_defined()
 		if not self.dfp_is_s3_remote_file():
-			return super(DFPExternalStorageFile, self).get_content()
+			return super().get_content(encodings=encodings)
 		try:
 			if not self.is_downloadable():
 				raise Exception("File not available")
-			return self.dfp_external_storage_download_file()
+			self._content = self.dfp_external_storage_download_file()
+			if not self._content.startswith(BINARY_FILE_SIGNATURES):
+				for encoding in FILE_ENCODING_OPTIONS if encodings is None else encodings:
+					try:
+						self._content = self._content.decode(encoding)
+						break
+					except UnicodeDecodeError:
+						continue
+			return self._content
 		except Exception:
 			# If no document, no read permissions, etc. For security reasons do not give any information, so just raise a 404 error
 			raise frappe.PageDoesNotExistError()

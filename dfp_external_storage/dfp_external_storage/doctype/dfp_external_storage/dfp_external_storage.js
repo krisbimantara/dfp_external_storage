@@ -5,7 +5,7 @@ frappe.ui.form.on('DFP External Storage', {
 		frm.button_remote_files_list = null
 	},
 
-	refresh: function(frm) {
+	refresh: async function(frm) {
 		if (frm.is_new() && !frm.doc.doctypes_ignored.length) {
 			frm.doc.doctypes_ignored.push({doctype_to_ignore: 'Data Import'})
 			frm.doc.doctypes_ignored.push({doctype_to_ignore: 'Prepared Report'})
@@ -28,25 +28,31 @@ frappe.ui.form.on('DFP External Storage', {
 			}
 		})
 
-		frappe.db.get_list(
-			'DFP External Storage by Folder',
-			{fields: ['name','folder']}
-		).then(data => {
-			if (data && data.length) {
-				let folders_name_not_assigned = data
-					.filter(d => d.name != frm.doc.name ? d : null)
-					.map(d => d.folder)
-				frm.set_query('folders', function () {
-					return {
-						filters: {
-							is_folder: 1,
-							name: ['not in', folders_name_not_assigned],
-						},
-					}
-				})
-
-			}
-		})
+		const current_storage = frm.doc.name
+		const page_length = 100
+		const assigned_folders = []
+		let limit_start = 0
+		while (true) {
+			const rows = await frappe.db.get_list('DFP External Storage by Folder', {
+				fields: ['parent', 'folder'],
+				parent_doctype: 'DFP External Storage',
+				filters: { parenttype: 'DFP External Storage' },
+				order_by: 'name asc',
+				limit_start,
+				limit: page_length,
+			})
+			assigned_folders.push(...rows.filter(row => row.parent !== current_storage).map(row => row.folder))
+			if (rows.length < page_length) break
+			limit_start += page_length
+		}
+		// Ignore a response if navigation switched to a different storage form.
+		if (frm.doc.name !== current_storage) return
+		frm.set_query('folders', () => ({
+			filters: {
+				is_folder: 1,
+				...(assigned_folders.length ? { name: ['not in', [...new Set(assigned_folders)]] } : {}),
+			},
+		}))
 
 	},
 

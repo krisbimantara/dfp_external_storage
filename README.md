@@ -1,5 +1,30 @@
 # DFP External Storage
 
+## Frappe 16 compatibility branch
+
+The `frappe-16-compat` branch of `krisbimantara/dfp_external_storage` targets
+Frappe 16 and is used with Juragan's branch of the same name. ERPNext is not
+required. Framework/runtime installation is handled separately.
+
+The primary migration reference is the official
+[Frappe 16 migration guide](https://github.com/frappe/frappe/wiki/Migrating-to-version-16).
+
+For a new migration bench, fetch this fork with:
+
+```bash
+bench get-app --branch frappe-16-compat https://github.com/krisbimantara/dfp_external_storage.git
+```
+
+This branch adapts the File content API, managed-S3 attachment hash/copy
+integration, storage-folder queries and streaming file-like behavior. Core File
+validation and private attachment access checks remain in the lifecycle.
+
+Test the selected Frappe 16 release on a staging site with a separate bucket
+before deployment: local/remote text and binary content, copied/shared private
+attachments, folder mappings, and stream EOF/seek behavior. This compatibility
+work does not redesign DFP's existing transaction cleanup, public-response cache
+or bucket-list authorization. Review those separately before bulk relocation.
+
 > **😊 Thanks!**
 >
 > If you find this code useful, please help me (https://github.com/sponsors/developmentforpeople) to keep it updated, improved and safe. Thank you very very much for your help 🫶!
