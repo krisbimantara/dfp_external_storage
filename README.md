@@ -2,8 +2,8 @@
 
 ## Frappe 16 compatibility branch
 
-The `frappe-16-compat` branch of `krisbimantara/dfp_external_storage` targets
-Frappe 16 and is used with Juragan's branch of the same name. ERPNext is not
+The `version-16` branch of `krisbimantara/dfp_external_storage` targets
+Frappe 16 and is used with Juragan's `frappe-16-compat` branch. ERPNext is not
 required. Framework/runtime installation is handled separately.
 
 The primary migration reference is the official
@@ -12,7 +12,7 @@ The primary migration reference is the official
 For a new migration bench, fetch this fork with:
 
 ```bash
-bench get-app --branch frappe-16-compat https://github.com/krisbimantara/dfp_external_storage.git
+bench get-app --branch version-16 https://github.com/krisbimantara/dfp_external_storage.git
 ```
 
 This branch adapts the File content API, managed-S3 attachment hash/copy
